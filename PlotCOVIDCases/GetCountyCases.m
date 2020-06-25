@@ -1,5 +1,5 @@
 %%GetCountyCases
-function [Dates,CountyCases,NewCountyCases,t,H1,H2] = GetCountyCases()
+function [uscounties,Dates,CountyCases,NewCountyCases,t,H1,H2] = GetCountyCases()
 % [Dates,CountyCases,NewCountyCases,t,H1,H2] = GetCountyCases()
 % 
 % Imports NY Times COVID-19 data, filters daily cases by user-input state
@@ -15,18 +15,7 @@ function [Dates,CountyCases,NewCountyCases,t,H1,H2] = GetCountyCases()
 %% Set local data directory
 drIn = [uigetdir(pwd,'Select covid-19-data directory (NYTimes master)') filesep];
 
-%% User input state name
-stname = input('Input State name: ','s');
- % Fix casing
-stname(1) = upper(stname(1));
-stname(2:end) = lower(stname(2:end));   
-
-%% User input county name
-cname = input('Input County name: ','s');
- % Fix casing
-cname(1) = upper(cname(1));
-cname(2:end) = lower(cname(2:end));   
-fprintf('Importing COVID-19 new case data for %s County, %s...\n',cname, stname)
+redoflag = 1; %initialize flag for later
 
 %% Import NY Times data (.csv)
 disp('Importing NY Times COVID-19 data by county...')
@@ -34,9 +23,9 @@ filename = [drIn 'us-counties.csv']; %input file
 delimiter = ',';
 formatSpec = '%q%q%q%*q%q%[^\n\r]';
 fileID = fopen(filename,'r');
-    disp('.')
+    disp('[.     ]')
 dataArray = textscan(fileID, formatSpec, 'Delimiter', delimiter, 'TextType', 'string',  'ReturnOnError', false);
-    disp('..')
+    disp('[..    ]')
 fclose(fileID);
 clear filename
 
@@ -48,7 +37,7 @@ for col=1:length(dataArray)-1
 end
 numericData = NaN(size(dataArray{1},1),size(dataArray,2));
 
-disp('...')
+disp('[...   ]')
 
 % Converts text in the input cell array to numbers. Replaced non-numeric
 % text with NaN.
@@ -79,7 +68,7 @@ for row=1:size(rawData, 1)
         raw{row, 4} = rawData{row};
     end
 end
-disp('....')
+disp('[....  ]')
 
 % Convert the contents of columns with dates to MATLAB datetimes using the specified date format.
 try
@@ -96,7 +85,7 @@ end
 dates = dates(:,1);
 rawNumericColumns = raw(:, 4);
 rawStringColumns = string(raw(:, [2,3]));
-disp('.....')
+disp('[..... ]')
 
 %% Replace non-numeric cells with NaN
 R = cellfun(@(x) ~isnumeric(x) && ~islogical(x),rawNumericColumns); % Find non-numeric cells
@@ -107,58 +96,99 @@ for catIdx = [1,2]
     idx = (rawStringColumns(:, catIdx) == "<undefined>");
     rawStringColumns(idx, catIdx) = "";
 end
-disp('......')
-%% Create output variable
+disp('[......]')
+
+%% Create data table
 uscounties = table;
 uscounties.date = dates{:, 1};
 uscounties.county = categorical(rawStringColumns(:, 1));
 uscounties.state = categorical(rawStringColumns(:, 2));
 uscounties.cases = cell2mat(rawNumericColumns(:, 1));
 uscounties(1,:) = [];
+disp('Data loaded!')
 
 % Clean up workspace
-clearvars cat* col data* dates delim* fileID form* idx inval* num* R raw* re* row
+clearvars ans catIdx col dat* delimiter fileID formatSpec idx invalid* num* R raw* regexstr result row
 
-%% Index appropriate county
-Stateidx = strcmp(string(uscounties.state),stname);
-Countyidx = strcmp(string(uscounties.county),cname) ;
-CountyStateidx = Countyidx & Stateidx;
+%% User selects state & county; Index data within big table
+states = unique(uscounties.state); %unique state names
+% counties = unique(uscounties.county); %unique county names
 
-CountyCases = uscounties.cases(CountyStateidx); %cumulative cases
-NewCountyCases = diff([0; CountyCases]); %new cases per day
-Dates = uscounties.date(CountyStateidx); %dates
-t = [1:length(Dates)]'; %#ok<NBRAK> %time (day) vector
+while ~isempty(redoflag)
+    
+    % State
+    [stindx] = listdlg('PromptString',{'Select a state.'},'SelectionMode','single','ListString',states);
+    stname = char(states(stindx)); %state name
+    clear stindx
+    Stateidx = strcmp(string(uscounties.state),stname); %state index in big data table
 
-%% Calculate moving averages
-M7d = movmean(NewCountyCases,[6 0]); %7-day average
-M14d = movmean(NewCountyCases, [13 0]); %14-day average
+    % County
+    okcounties = unique(uscounties.county(Stateidx)); %counties within the selected state
+    [ctyindx] = listdlg('PromptString',{'Select a county.'},'SelectionMode','single','ListString',okcounties);
+    cname = char(okcounties(ctyindx)); %county name
+    clear ctyindx
+    Countyidx = strcmp(string(uscounties.county),cname); %county index in big table - **some county names are repeated b/t states!**
 
-%% Plot cases
-H1 = figure('position',[1036 426 724 570]);
-subplot(211); %New cases/day
-    plot(Dates,NewCountyCases,'k','linew',2)
-    box off
-    ylabel('# new positive tests/day')
-    title(sprintf('%s County, %s: COVID-19 new cases',cname,stname));
-    axis tight
-subplot(212); %Cumulative cases
-    plot(Dates,CountyCases,'b','linew',2)
-    box off
-    ylabel('cumulative positive tests')
-    title(sprintf('%s County, %s: Cumulative COVID-19+ cases',cname,stname));
-    axis tight
+    CountyStateidx = Countyidx & Stateidx; %specific county within state
+    fprintf('Getting COVID-19 new case data for %s County, %s...\n',cname, stname)
 
-%% Plot moving averages for new cases/day
-H2 = figure('position',[1036 41 724 310]);
-    plot(Dates, NewCountyCases,'k','linew',2)
-    hold on
-    plot(Dates, M7d,'r','linew',1.5)
-    plot(Dates, M14d,'b','linew',1.5)
-    box off
-    axis tight
-    legend RawVals 7dayAvg 14dayAvg
-    legend('location','northwest') 
-    title('New Leon cases/day')
-    title(sprintf('New %s County cases/day',cname));
+    CountyCases = uscounties.cases(CountyStateidx); %cumulative cases
+    CountyCases =[0; CountyCases];
+    NewCountyCases = diff([0; CountyCases]); %new cases per day
+    Dates = uscounties.date(CountyStateidx); %dates
+    Dates = [Dates(1)-1; Dates];
+    t = [1:length(Dates)]'; %#ok<NBRAK> %time (day) vector
 
-end
+    %% Calculate moving averages
+    M7d = movmean(NewCountyCases,[6 0]); %7-day average
+    M14d = movmean(NewCountyCases, [13 0]); %14-day average
+
+    %% Plot cases
+    H1 = figure('position',[1036 426 724 570]);
+    subplot(211); %New cases/day
+        plot(Dates,NewCountyCases,'k','linew',2)
+        box off
+        ylabel('# new positive tests/day')
+        title(sprintf('%s County, %s: COVID-19 new cases',cname,stname));
+        axis tight
+    subplot(212); %Cumulative cases
+        plot(Dates,CountyCases,'b','linew',2)
+        box off
+        ylabel('cumulative positive tests')
+        title(sprintf('%s County, %s: Cumulative COVID-19+ cases',cname,stname));
+        axis tight
+
+    %% Plot moving averages for new cases/day
+    H2 = figure('position',[1036 41 724 310]);
+        plot(Dates, NewCountyCases,'k','linew',2)
+        hold on
+        plot(Dates, M7d,'r','linew',1.5)
+        plot(Dates, M14d,'b','linew',1.5)
+        box off
+        axis tight
+        legend RawVals 7dayAvg 14dayAvg
+        legend('location','northwest') 
+        title('New Leon cases/day')
+        title(sprintf('New %s County cases/day',cname));
+    
+        
+    %% Option to re-do and view a new county
+    goagain = [];
+    while isempty(goagain)
+        goagain = string(input('View another county? \n 0=No 1=Yes\n','s'));
+        if strcmp(goagain,'0') %end
+            disp('Plotting complete.')
+            redoflag = []; %#ok<NASGU>
+            return
+        elseif ~strcmp(goagain,'1') && ~strcmp(goagain,'0') %typo
+            disp('Typo. Try again.')
+            goagain = [];
+        else %repeat
+            close(H1); close(H2);
+            clear H1 H2 Dates cname County* M* NewCounty* ok* Stateidx stname t
+        end
+    end
+
+end %while redoflag
+
+end %function
